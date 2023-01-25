@@ -1,6 +1,6 @@
 format short e
 
-% code for Q1.1
+%% code for Q1.1
 
 % load the data
 %   108 image volumes each with a different gradient
@@ -140,3 +140,7 @@ FA_RGB = FA_RGB ./ max(FA_RGB, [], 'all');
 imshow(flipud(permute(FA_RGB, [2,1,3])), []);
 
 clear eig_vec principal_eig_val_idx eig_val
+
+%% Q 1.1.2
+
+
