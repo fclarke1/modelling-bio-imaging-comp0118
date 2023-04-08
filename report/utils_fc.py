@@ -295,6 +295,25 @@ def create_problem_to_minimize(problem: str, bounds=None):
     return problem_object
 
 
+def is_monotonic_index(data:NDArray) -> NDArray:
+    """given NDArray of shape [...,i], return a bool array of indexes that are monotonic of shape [...]
+
+    Args:
+        data (NDArray): [...,i], checking if each signal is monotonic over last dimension
+
+    Returns:
+        NDArray: [...] bool for each voxel is monotonic
+    """
+    data_diff = np.zeros(shape=(*data.shape[:-1], data.shape[-1]-1))    # one less dime in t dimension due to calculating diff
+    for t in range(data.shape[-1]):
+        data0 = data[...,t]
+        data1 = data[...,t+1]
+        data_diff[...,t] = data0 - data1
+        data_diff_increasing_bool = data_diff > 0
+        is_data_mono = np.where(data_diff_increasing_bool.sum(axis=-1) > 0, True, False)
+        
+        return is_data_mono
+
 
 class MRIDataLoader():
     """Load MRI data using class"""
