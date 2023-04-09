@@ -8,11 +8,13 @@ from tqdm import tqdm
 
 rng = np.random.default_rng(seed=42)
 
-SUBJECT_IDS_REMOVE = np.array([43607, 44631, 74067, 78004])
+
+SUBJECT_IDS_REMOVE = np.array([43607, 44631, 74067, 78004, 21511, 98394])
 # subject id 43607, error on loading: True, shape: (0,)
 # subject id 44631, error on loading: False, shape: (96, 96, 51, 8)
 # subject id 74067, error on loading: False, shape: (96, 96, 51, 2)
 # subject id 78004, error on loading: False, shape: (96, 96, 51, 7)
+# subject id 21522 and 98394 aren't extreme pre term, nor full term
 
 
 def T2_estimation(img1: NDArray, img2: NDArray, mask: NDArray, TE_1: float, TE_2: float) -> NDArray:
@@ -280,15 +282,15 @@ def objective_two_v_compartment(x, signal, TE_times):
 def create_problem_to_minimize(problem: str, bounds=None):
     if problem == 'one_compartment':
         if bounds is None:
-            bounds = [(0, 15000), (20, 250)]
+            bounds = [(0, 15000), (20, 2000)]
         problem_object = {'fun': objective_one_compartment, 'bounds': bounds}
     elif problem == 'two_compartment':
         if bounds is None:
-            bounds = [(2000, 15000), (20, 200), (40,250)]
+            bounds = [(2000, 15000), (20, 200), (20,2000)]
         problem_object = {'fun': objective_two_compartment, 'bounds': bounds}
     elif problem == 'two_compartment_v':
         if bounds is None:
-            bounds = [(2000, 15000), (20, 200), (40,250), (0, 1)]
+            bounds = [(2000, 15000), (20, 200), (20,2000), (0, 1)]
         problem_object = {'fun': objective_two_v_compartment, 'bounds': bounds}
     else:
         print('ERROR: problem_string description doesnt match')
@@ -313,6 +315,9 @@ def is_monotonic_index(data:NDArray) -> NDArray:
         is_data_mono = np.where(data_diff_increasing_bool.sum(axis=-1) > 0, True, False)
         
         return is_data_mono
+
+
+
 
 
 class MRIDataLoader():
@@ -410,9 +415,14 @@ class MRIDataLoader():
         
         # if getting seg1 then swap brain mask for background mask
         if file_type == 'qt2_seg1':
+            # make each compartment sum to one (or be less than one)
+            img = np.clip(img, a_min=0, a_max=1)
+            norm_inv = 1 / np.where(img.sum(axis=-1) > 1, img.sum(axis=-1), 1)
+            img = np.einsum('...i,...->...i', img, norm_inv)
+            
+            # change the first segmentation to be the brain segmentation
             mask = self.get_img(subject_id=subject_id, file_type='mask', is_normalise=is_normalise)
             img[:,:,:,0] = mask
-            img = np.clip(img, a_min=0, a_max=1)
         return img
 
     
@@ -429,6 +439,7 @@ class MRIDataLoader():
     
     def get_info(self, info_id: int):
         """given info id according to info_dict['label'] return that info for all subjects
+        1: GAB, 2: MF, 
 
         Args:
             info_id (int): index of the info wanted from info_dict['label']
@@ -468,3 +479,97 @@ class MRIDataLoader():
         """
         max = img.max()
         return img / max
+    
+    
+    def get_preterm_ids(self) -> NDArray:
+        """return all the subject ids that are preterm
+
+        Returns:
+            NDArray: preterm ids
+        """
+        is_preterm = self.get_info(1) < 26
+        is_fullterm = ~is_preterm
+        preterm_ids = np.arange(self.subject_ids.shape[0])[is_preterm]
+        fullterm_ids = np.arange(self.subject_ids.shape[0])[is_fullterm]
+        return preterm_ids, fullterm_ids
+    
+    
+    def load_nb_roi_thres(self, thresh: float) -> NDArray:
+        """calculates the number of voxels in each subject in each roi over threshold
+
+        Args:
+            thresh (float): threshold value
+
+        Returns:
+            NDArray: [n,roi_id]
+        """
+        file_path = f'data/arrays/nb_roi_subject_t{thresh}.npy'
+        try:
+            nb_roi_subject = np.load(file_path)
+        except:
+            print('No File exists - Creating Data...')
+            nb_roi_subject = []
+            for subject_id in tqdm(self.subject_ids, ascii=True):
+                seg_data = self.get_img(subject_id, 'seg')
+                seg_data_flatten = seg_data.reshape(-1, seg_data.shape[-1])   # [n, roi]
+                nb_roi = (seg_data_flatten > thresh).sum(axis=0)
+                nb_roi_subject.append(nb_roi)
+            nb_roi_subject = np.array(nb_roi_subject)
+            np.save(file_path, nb_roi_subject)
+        return nb_roi_subject
+    
+    
+    def load_all_roi_thresh_data(self, thresh: float, is_only_preterm: bool, is_only_fullterm: bool):
+        """Load all mri and seg data for all subjects according to parameters
+
+        Args:
+            thresh (float): threshhold given to classify each roi
+            is_preterm (bool): want only data for preterms, or only full term
+
+        Returns:
+            NDArray: Returns 2x NDArrays of mri data and seg data
+        """
+        assert is_only_fullterm != is_only_preterm, 'Have to choose one or the other'
+        
+        preterm_ids, fullterm_ids = self.get_preterm_ids()
+        root_path = 'data/arrays/'
+        if is_only_preterm:
+            preterm_string = 'preterm'
+            subject_ids = preterm_ids
+        elif is_only_fullterm:
+            preterm_string = 'fullterm'
+            subject_ids = fullterm_ids
+        file_end_path = f'_{preterm_string}_t{str(thresh)}.npy'
+        
+        try:
+            roi_data = np.load(root_path + 'roi_data' + file_end_path, allow_pickle=True)
+            roi_seg =  np.load(root_path + 'roi_seg'  + file_end_path, allow_pickle=True)
+        except:
+            print('No File exists - Creating Data...')
+            roi_data_subject = [[],[],[],[],[],[]]
+            roi_seg_subject = [[],[],[],[],[],[]]
+
+            for subject_id in tqdm(subject_ids, ascii=True):
+                mri_data = self.get_img(subject_id, 'signal')
+                seg_data = self.get_img(subject_id, 'seg')
+                
+                mri_data_flatten = mri_data.reshape(-1, mri_data.shape[-1])
+                seg_data_flatten = seg_data.reshape(-1, seg_data.shape[-1])
+                is_roi = seg_data_flatten > thresh
+                
+                for roi_id in self.roi_id_dict: 
+                    roi_data_subject[roi_id].append(mri_data_flatten[is_roi[...,roi_id],:])
+                    roi_seg_subject[roi_id].append(seg_data_flatten[is_roi[...,roi_id],:])
+
+            roi_data = []
+            roi_seg = []
+            for roi_id in self.roi_id_dict:
+                roi_data.append(np.concatenate(roi_data_subject[roi_id], axis=0))
+                roi_seg.append(np.concatenate(roi_seg_subject[roi_id], axis=0))
+            roi_data = np.asarray(roi_data, dtype=object)
+            roi_seg = np.asarray(roi_seg, dtype=object)
+
+            np.save(root_path + 'roi_data' + file_end_path, roi_data)
+            np.save(root_path + 'roi_seg' + file_end_path, roi_seg)
+        
+        return roi_data, roi_seg
