@@ -163,25 +163,28 @@ def RMSE(signal_actual: NDArray, signal_estimate: NDArray, dim: int=-1) -> NDArr
     return RMSE
 
 
-def SSD(signal_actual: NDArray, signal_estimate: NDArray, dim: int=-1) -> NDArray:
-    """Calculate the Root Mean Square error between the true value and estimate value
+def SSD(signal_actual: NDArray, signal_estimate: NDArray, dim: int=-1, is_normalised:bool=True) -> NDArray:
+    """Calculate the sum of squared difference between the true value and estimate value
     Assumes the errors are normal so cannot be transformed to log-scale
-    Give dimension (dim) that estimates for the same parameters are on, eg. dim=2 for a 2D image [h,w,t]
 
     Args:
         signal_actual (NDArray): True signal values
         signal_estimate (NDArray): Estimated signal values from model
         dim (_type_, optional): Dimension of time in signal. Defaults to 3:int.
+        is_normalised (book): return SSD per voxel if True (default False)
 
     Returns:
-        RMSE (NDArray): float at each voxel with error 
+        SSD (NDArray): Total SSD 
     """
     assert signal_actual.shape == signal_estimate.shape, 'estimate and actual shapes need to be the same'
     
     squared_diff = (signal_actual - signal_estimate)**2
     
     # calculate the number of voxels excluding the t dimension
-    n = np.prod(signal_actual.shape[-1])
+    if is_normalised:
+        n = np.prod(signal_actual.shape[-1])
+    else:
+        n = 1
     SSD = np.sum(squared_diff, axis=dim) / n
     return SSD
 
@@ -319,6 +322,22 @@ def is_monotonic_index(data:NDArray) -> NDArray:
         return is_data_mono
 
 
+def AIC(signal_actual:NDArray, signal_est:NDArray, N:int) -> NDArray:
+    """Given true and estimated signal, with the number of estimated parameters in the model return the AIC scalar
+
+    Args:
+        signal_actual (NDArray): [...,t] True signal
+        signal_est (NDArray): [...,t] estimated signal
+        N (int): number of estimated parameters in the model
+
+    Returns:
+        AIC (NDArray): AIC of the model at each voxel (different fitted parameters at each voxel)
+    """
+    N = N + 1
+    sum_squared_diff = SSD(signal_actual, signal_est, is_normalised=False)  # [...]
+    K = signal_actual.shape[-1] # t
+    AIC = 2 * N + K * np.log(sum_squared_diff / K)  # [...]
+    return AIC
 
 
 
