@@ -540,26 +540,33 @@ class MRIDataLoader():
         return nb_roi_subject
     
     
-    def load_all_roi_thresh_data(self, thresh: float, is_only_preterm: bool, is_only_fullterm: bool):
+    def load_all_roi_thresh_data(self, thresh: float, subject_names='all'):
         """Load all mri and seg data for all subjects according to parameters
 
         Args:
             thresh (float): threshhold given to classify each roi
-            is_preterm (bool): want only data for preterms, or only full term
+            subject_names (str): ['all', 'preterm', 'fullterm'] - what subject ids do you want the data for
 
         Returns:
             NDArray: Returns 2x NDArrays of mri data and seg data
         """
-        assert is_only_fullterm != is_only_preterm, 'Have to choose one or the other'
-        
         preterm_ids, fullterm_ids = self.get_preterm_ids()
-        root_path = 'data/arrays/'
-        if is_only_preterm:
-            preterm_string = 'preterm'
+        
+        if subject_names == 'all':
+            subject_ids = self.subject_ids
+            preterm_string = 'all'
+        elif subject_names == 'preterm':
             subject_ids = preterm_ids
-        elif is_only_fullterm:
-            preterm_string = 'fullterm'
+            preterm_string = 'preterm'
+        elif subject_names == 'fullterm':
             subject_ids = fullterm_ids
+            preterm_string = 'fullterm'
+        else:
+            print('ERROR: subject_names incorrect')
+            return 0
+        
+        
+        root_path = 'data/arrays/'
         file_end_path = f'_{preterm_string}_t{str(thresh)}.npy'
         
         try:
