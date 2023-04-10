@@ -9,12 +9,13 @@ from tqdm import tqdm
 rng = np.random.default_rng(seed=42)
 
 
-SUBJECT_IDS_REMOVE = np.array([43607, 44631, 74067, 78004, 21511, 98394])
+SUBJECT_IDS_REMOVE = np.array([43607, 44631, 74067, 78004, 21511, 98394, 67358, 17065])
 # subject id 43607, error on loading: True, shape: (0,)
 # subject id 44631, error on loading: False, shape: (96, 96, 51, 8)
 # subject id 74067, error on loading: False, shape: (96, 96, 51, 2)
 # subject id 78004, error on loading: False, shape: (96, 96, 51, 7)
 # subject id 21522 and 98394 aren't extreme pre term, nor full term
+# subject ids: [67358, 48996, 17065] have high nonmonotonic percentages , 67358, 17065
 
 
 def T2_estimation(img1: NDArray, img2: NDArray, mask: NDArray, TE_1: float, TE_2: float) -> NDArray:
@@ -40,40 +41,41 @@ def T2_estimation(img1: NDArray, img2: NDArray, mask: NDArray, TE_1: float, TE_2
     return T2
 
 
-def lsqr_weighted(imgs: NDArray, mask: NDArray, TE: NDArray):
+def lsqr_weighted(data: NDArray, mask: NDArray, TE: NDArray):
     """calculate T2 and S0 from the signal images of single slice through multiple TE times
     assumes there is only one T2 compartment
 
     Args:
-        imgs (NDarray): [w,h,t]
-        mask (NDArray): [w,h]
-        TE (NDarray): 1D array
+        imgs (NDarray): [...,t]
+        mask (NDArray): [...]
+        TE (NDarray): [t] 1D array
     
     Return:
-        T2 (NDarray): [w,h]
-        S0 (NDarray): [w,h]
+        T2 (NDarray): [...]
+        S0 (NDarray): [...]
     """
-    assert TE.shape[0] == imgs.shape[2], 'number of TE timings needs to be the same number of images'
+    assert TE.shape[0] == data.shape[-1], 'number of TE timings needs to be the same number of images'
     
     eps = 1
-    dim_i = imgs.shape[0]
-    dim_j = imgs.shape[1]
+    data_shape = data.shape[:-1]
+    data_flat = data.reshape((-1,data.shape[-1]))
+    mask_flat = mask.reshape((-1))
+    nb_data = data_flat.shape[0]
     TE_num =  TE.shape[0]
-    X = np.zeros(shape=(dim_i, dim_j, 2))
+    X = np.zeros(shape=(nb_data, 2))
     
     G = np.ones(shape=(TE_num, 2))
     G[:,1] = TE
-    for i in range(dim_i):
-        for j in range(dim_j):
-            A = imgs[i,j,:]
-            if A.min() > eps and mask[i,j] > 0:
-                W = np.diag(A**2)
-                invmap = np.linalg.pinv(G.T @ W @ G) @ G.T @ W
-                X[i,j,:] = invmap @ np.log(A)
+    for i in range(nb_data):
+        A = data_flat[i,:]
+        if A.min() > eps and mask_flat[i] > 0:
+            W = np.diag(A**2)
+            invmap = np.linalg.pinv(G.T @ W @ G) @ G.T @ W
+            X[i,:] = invmap @ np.log(A)
     
-    T2 = (-1) / X[:,:,1]
-    T2 = np.where(T2 > 0, T2, 0)
-    S0 = np.exp(X[:,:,0])
+    T2 = (-1) / X[:,1]
+    T2 = np.where(T2 > 0, T2, 0).reshape(data_shape)
+    S0 = np.exp(X[:,0]).reshape(data_shape)
     return T2, S0
 
 
@@ -184,7 +186,7 @@ def SSD(signal_actual: NDArray, signal_estimate: NDArray, dim: int=-1) -> NDArra
     return SSD
 
 
-def minimize_given_problem(problem, X0: NDArray, args_list: list, is_solve_for: NDArray=None, is_gaussian=False, nb_repeat=5, is_print_progress=True):
+def minimize_given_problem(problem, X0: NDArray, args_list: list, is_solve_for: NDArray=None, is_print_progress=True):
     """Given parameters for scipy.optimize.minimize, minimize over all given starting points we want to solve_for
 
     Args:
@@ -286,7 +288,7 @@ def create_problem_to_minimize(problem: str, bounds=None):
         problem_object = {'fun': objective_one_compartment, 'bounds': bounds}
     elif problem == 'two_compartment':
         if bounds is None:
-            bounds = [(2000, 15000), (20, 200), (20,2000)]
+            bounds = [(0, 15000), (20, 2000), (20,2000)]
         problem_object = {'fun': objective_two_compartment, 'bounds': bounds}
     elif problem == 'two_compartment_v':
         if bounds is None:
@@ -307,12 +309,12 @@ def is_monotonic_index(data:NDArray) -> NDArray:
         NDArray: [...] bool for each voxel is monotonic
     """
     data_diff = np.zeros(shape=(*data.shape[:-1], data.shape[-1]-1))    # one less dime in t dimension due to calculating diff
-    for t in range(data.shape[-1]):
+    for t in range(data_diff.shape[-1]):
         data0 = data[...,t]
         data1 = data[...,t+1]
-        data_diff[...,t] = data0 - data1
+        data_diff[...,t] = data1 - data0
         data_diff_increasing_bool = data_diff > 0
-        is_data_mono = np.where(data_diff_increasing_bool.sum(axis=-1) > 0, True, False)
+        is_data_mono = np.where(data_diff_increasing_bool.sum(axis=-1) == 0, True, False)
         
         return is_data_mono
 
@@ -481,11 +483,11 @@ class MRIDataLoader():
         return img / max
     
     
-    def get_preterm_ids(self) -> NDArray:
+    def get_preterm_ids(self):
         """return all the subject ids that are preterm
 
         Returns:
-            NDArray: preterm ids
+            NDArray: preterm ids, fullterm_ids
         """
         is_preterm = self.get_info(1) < 26
         is_fullterm = ~is_preterm
